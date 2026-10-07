@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Navidrome](https://img.shields.io/badge/Navidrome-OpenSubsonic-00bcd4.svg)](https://www.navidrome.org/)
 [![Audio Quality](https://img.shields.io/badge/Audio-320kbps%20MP3-blue.svg)](#audio-quality)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 A command-line script to import DI.fm and sister network stations (RadioTunes, JazzRadio, RockRadio, ClassicalRadio) into Navidrome or any OpenSubsonic-compatible server using 320 kbps MP3 streams.
 
@@ -121,4 +121,4 @@ The Subsonic radio specification provides a flat list structure without folders 
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
