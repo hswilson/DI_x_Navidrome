@@ -5,7 +5,7 @@
 [![Audio Quality](https://img.shields.io/badge/Audio-320kbps%20MP3-blue.svg)](#audio-quality)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-A command-line script to import DI.fm and sister network stations (RadioTunes, JazzRadio, RockRadio, ClassicalRadio) into Navidrome or any OpenSubsonic-compatible server using 320 kbps MP3 streams.
+A command-line script to import DI.fm and sister network stations (RadioTunes, JazzRadio, RockRadio, ClassicalRadio, ZenRadio) into Navidrome or any OpenSubsonic-compatible server using 320 kbps MP3 streams.
 
 It communicates with Navidrome via the Subsonic API, avoiding direct SQLite database modifications.
 
@@ -19,8 +19,9 @@ It communicates with Navidrome via the Subsonic API, avoiding direct SQLite data
 | RadioTunes | `radiotunes.com` | 99 | 320 kbps MP3 (`_hi` alias) |
 | ClassicalRadio | `classicalradio.com` | 56 | 320 kbps MP3 |
 | JazzRadio | `jazzradio.com` | 44 | 320 kbps MP3 |
+| ZenRadio | `zenradio.com` | 39 | 320 kbps MP3 (`zr` prefix) |
 | RockRadio | `rockradio.com` | 37 | 320 kbps MP3 |
-| **Total** | | **337** | |
+| **Total** | | **376** | |
 
 ---
 
@@ -67,7 +68,7 @@ It communicates with Navidrome via the Subsonic API, avoiding direct SQLite data
    NAVIDROME_USER=your_navidrome_username
    NAVIDROME_PASSWORD=your_navidrome_password
    DI_LISTEN_KEY=your_32_character_listen_key
-   NETWORKS=di,radiotunes,jazzradio,rockradio,classicalradio
+   NETWORKS=di,radiotunes,jazzradio,rockradio,classicalradio,zenradio
    ```
 
 ---
@@ -86,7 +87,7 @@ python sync_difm.py
 
 ### Sync Selected Networks
 ```bash
-python sync_difm.py --networks di,jazzradio
+python sync_difm.py --networks di,jazzradio,zenradio
 ```
 
 ---
@@ -98,7 +99,7 @@ All options can be passed via command line to override `.env` values:
 | Argument | Description | Default |
 | :--- | :--- | :--- |
 | `--dry-run` | Preview changes without modifying Navidrome | `False` |
-| `--networks` | Comma-separated list of networks | All 5 networks |
+| `--networks` | Comma-separated list of networks | All 6 networks |
 | `--url` | Base URL of the Navidrome instance | `$NAVIDROME_URL` or `http://localhost:4533` |
 | `--user` | Navidrome username | `$NAVIDROME_USER` |
 | `--password` | Navidrome password | `$NAVIDROME_PASSWORD` |

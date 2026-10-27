@@ -49,6 +49,14 @@ NETWORK_CONFIG = {
         "stream_host": "prem2.classicalradio.com",
         "stream_suffix": "",  # Base stream is already 320 kbps MP3
     },
+    # see docs/working/2026-10-27_zen_radio_sync.md
+    "zenradio": {
+        "domain": "zenradio.com",
+        "display": "ZenRadio",
+        "stream_host": "prem2.zenradio.com",
+        "stream_prefix": "zr",
+        "stream_suffix": "",  # Base stream is already 320 kbps MP3
+    },
 }
 
 
@@ -123,8 +131,8 @@ def main():
     parser.add_argument("--listen-key", default=os.getenv("DI_LISTEN_KEY"), help="DI.fm 32-character Listen Key")
     parser.add_argument(
         "--networks",
-        default=os.getenv("NETWORKS", "di,radiotunes,jazzradio,rockradio,classicalradio"),
-        help="Comma-separated networks to sync (di, radiotunes, jazzradio, rockradio, classicalradio)",
+        default=os.getenv("NETWORKS", "di,radiotunes,jazzradio,rockradio,classicalradio,zenradio"),
+        help="Comma-separated networks to sync (di, radiotunes, jazzradio, rockradio, classicalradio, zenradio)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without updating Navidrome")
     args = parser.parse_args()
@@ -187,6 +195,7 @@ def main():
         display_name = cfg["display"]
         domain = cfg["domain"]
         stream_host = cfg["stream_host"]
+        stream_prefix = cfg.get("stream_prefix", "")
         stream_suffix = cfg.get("stream_suffix", "")
 
         print(f"\n--- Processing {display_name} ({domain}) ---")
@@ -201,7 +210,7 @@ def main():
 
             station_name = f"{display_name}: {chan_name}"
             # 320 kbps MP3 stream on port 80
-            stream_url = f"http://{stream_host}:80/{chan_key}{stream_suffix}?{di_key}"
+            stream_url = f"http://{stream_host}:80/{stream_prefix}{chan_key}{stream_suffix}?{di_key}"
             homepage = f"https://www.{domain}/channels/{chan_key}"
 
             if station_name in existing_stations:
