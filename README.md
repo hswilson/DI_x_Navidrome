@@ -28,9 +28,10 @@ It communicates with Navidrome via the Subsonic API, avoiding direct SQLite data
 ## Key Behaviors
 
 - **320 kbps MP3 Targets**: AudioAddict serves 128 kbps AAC on DI.FM and RadioTunes by default. The script appends the `_hi` alias to target the 320 kbps MP3 feeds across all channels.
+- **Official Station Artwork**: Automatically fetches official high-resolution channel thumbnails (300x300 PNG) from AudioAddict's CDN and uploads them directly into Navidrome via its native `/api/radio/{id}/image` endpoint, replacing generic placeholder icons.
 - **In-Place Upgrades**: If stations already exist in Navidrome at lower bitrates, running the script updates their stream URLs without duplicating or re-creating them.
 - **Duplicate Prevention**: Queries existing internet radio stations from Navidrome prior to injection, allowing safe re-runs.
-- **Dry-Run Option**: Pass `--dry-run` to preview additions or upgrades before committing changes.
+- **Dry-Run Option**: Pass `--dry-run` to preview additions, upgrades, or artwork uploads before committing changes.
 - **ICY Metadata**: Streams use standard Icecast headers, passing real-time artist and title information directly to player clients.
 - **Environment Variable Auth**: Stores credentials in `.env` to prevent accidental commits to version control.
 
@@ -100,6 +101,8 @@ All options can be passed via command line to override `.env` values:
 | :--- | :--- | :--- |
 | `--dry-run` | Preview changes without modifying Navidrome | `False` |
 | `--networks` | Comma-separated list of networks | All 6 networks |
+| `--no-artwork` | Skip syncing channel artwork | `False` |
+| `--force-artwork` | Re-upload artwork even if station already has coverArt | `False` |
 | `--url` | Base URL of the Navidrome instance | `$NAVIDROME_URL` or `http://localhost:4533` |
 | `--user` | Navidrome username | `$NAVIDROME_USER` |
 | `--password` | Navidrome password | `$NAVIDROME_PASSWORD` |

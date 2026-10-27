@@ -10,7 +10,7 @@ import os
 import secrets
 import string
 import sys
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import requests
 from dotenv import load_dotenv
 
@@ -111,16 +111,84 @@ def get_existing_stations(session: requests.Session, url: str, auth: Dict[str, s
         return {}
 
 
+def extract_channel_image_url(chan: Dict[str, Any]) -> str:
+    """Extract and normalize 300x300 PNG image URL from channel metadata."""
+    images = chan.get("images") or {}
+    template = images.get("default") or images.get("square") or images.get("compact") or chan.get("asset_url") or ""
+    if not template:
+        return ""
+    clean_url = template.split("{")[0]
+    if clean_url.startswith("//"):
+        clean_url = "https:" + clean_url
+    elif not clean_url.startswith("http"):
+        clean_url = "https://" + clean_url
+    if "?" not in clean_url:
+        clean_url += "?size=300x300"
+    return clean_url
+
+
 def fetch_network_channels(session: requests.Session, net_key: str, domain: str) -> List[Dict[str, Any]]:
-    """Fetch public channel directory from AudioAddict."""
-    url = f"https://listen.{domain}/public3"
+    """Fetch public channel directory and enrich with artwork from AudioAddict API."""
+    # 1. Fetch official public channel list
+    public_url = f"https://listen.{domain}/public3"
     try:
-        resp = session.get(url, timeout=10)
+        resp = session.get(public_url, timeout=10)
         resp.raise_for_status()
-        return resp.json()
+        channels = resp.json()
     except Exception as e:
-        print(f"[ERROR] Failed to fetch channel list for {net_key} ({url}): {e}")
+        print(f"[ERROR] Failed to fetch channel list for {net_key} ({public_url}): {e}")
         return []
+
+    # 2. Enrich with artwork metadata from api.audioaddict.com
+    api_url = f"https://api.audioaddict.com/v1/{net_key}/channels"
+    try:
+        api_resp = session.get(api_url, timeout=10)
+        if api_resp.status_code == 200:
+            meta_by_key = {c.get("key"): c for c in api_resp.json() if c.get("key")}
+            for chan in channels:
+                key = chan.get("key")
+                meta = meta_by_key.get(key, {})
+                chan["image_url"] = extract_channel_image_url(meta)
+    except Exception as e:
+        print(f"[WARN] Could not fetch artwork metadata from {api_url}: {e}")
+
+    return channels
+
+
+def get_navidrome_jwt(session: requests.Session, url: str, user: str, password: str) -> Optional[str]:
+    """Authenticate to Navidrome native API to obtain a JWT for artwork upload."""
+    try:
+        resp = session.post(
+            f"{url.rstrip('/')}/auth/login",
+            json={"username": user, "password": password},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("token")
+        else:
+            print(f"[WARN] Native Navidrome auth failed ({resp.status_code}): {resp.text}")
+    except Exception as e:
+        print(f"[WARN] Could not connect to Navidrome native auth: {e}")
+    return None
+
+
+def upload_station_artwork(session: requests.Session, url: str, jwt: str, station_id: str, image_url: str) -> bool:
+    """Download image from CDN and upload to Navidrome radio station."""
+    try:
+        img_resp = session.get(image_url, timeout=10)
+        img_resp.raise_for_status()
+        headers = {"x-nd-authorization": f"Bearer {jwt}"}
+        files = {"image": ("cover.png", img_resp.content, "image/png")}
+        resp = session.post(
+            f"{url.rstrip('/')}/api/radio/{station_id}/image",
+            headers=headers,
+            files=files,
+            timeout=15,
+        )
+        return resp.status_code in (200, 204)
+    except Exception as e:
+        print(f"[WARN] Failed to upload artwork for station {station_id}: {e}")
+        return False
 
 
 def main():
@@ -135,6 +203,8 @@ def main():
         help="Comma-separated networks to sync (di, radiotunes, jazzradio, rockradio, classicalradio, zenradio)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without updating Navidrome")
+    parser.add_argument("--no-artwork", action="store_true", help="Skip syncing channel artwork into Navidrome")
+    parser.add_argument("--force-artwork", action="store_true", help="Re-upload artwork even if station already has coverArt")
     args = parser.parse_args()
 
     # Configuration validation
@@ -167,6 +237,8 @@ def main():
         print(f"Supported networks: {', '.join(NETWORK_CONFIG.keys())}")
         sys.exit(1)
 
+    art_status = "NO" if args.no_artwork else ("FORCE ALL" if args.force_artwork else "YES (missing only)")
+
     print("==================================================")
     print(" AudioAddict (DI.fm) -> Navidrome Importer (320k)")
     print("==================================================")
@@ -174,6 +246,7 @@ def main():
     print(f"User:          {nav_user}")
     print(f"Listen Key:    {di_key[:4]}...{di_key[-4:]} ({len(di_key)} chars)")
     print(f"Networks:      {', '.join(selected_networks)}")
+    print(f"Sync Artwork:  {art_status}")
     print(f"Dry Run:       {'YES (No modifications will be made)' if args.dry_run else 'NO'}")
     print("==================================================\n")
 
@@ -183,12 +256,22 @@ def main():
     if not verify_navidrome_connection(session, nav_url, auth):
         sys.exit(1)
 
+    jwt = None
+    if not args.no_artwork:
+        jwt = get_navidrome_jwt(session, nav_url, nav_user, nav_pass)
+        if jwt:
+            print("[OK] Connected to Navidrome native API for artwork uploads.")
+        else:
+            print("[WARN] Could not authenticate to Navidrome native API. Artwork upload will be skipped.")
+
     existing_stations = get_existing_stations(session, nav_url, auth)
 
     total_added = 0
     total_upgraded = 0
     total_unchanged = 0
     total_failed = 0
+    total_artwork = 0
+    total_artwork_failed = 0
 
     for net in selected_networks:
         cfg = NETWORK_CONFIG[net]
@@ -205,6 +288,7 @@ def main():
         for chan in channels:
             chan_name = chan.get("name", "").strip()
             chan_key = chan.get("key", "").strip()
+            chan_img = chan.get("image_url", "")
             if not chan_name or not chan_key:
                 continue
 
@@ -213,72 +297,96 @@ def main():
             stream_url = f"http://{stream_host}:80/{stream_prefix}{chan_key}{stream_suffix}?{di_key}"
             homepage = f"https://www.{domain}/channels/{chan_key}"
 
-            if station_name in existing_stations:
-                existing_item = existing_stations[station_name]
-                existing_url = existing_item.get("streamUrl", "")
+            station_item = existing_stations.get(station_name)
+
+            if station_item:
+                existing_url = station_item.get("streamUrl", "")
                 if existing_url == stream_url:
                     total_unchanged += 1
-                    continue
-
-                # Station exists but stream URL needs upgrade to 320k MP3
-                if args.dry_run:
-                    print(f"  [DRY-RUN UPGRADE] Would upgrade: {station_name} -> {stream_url}")
-                    total_upgraded += 1
-                    continue
-
-                update_payload = {
-                    **auth,
-                    "id": existing_item["id"],
-                    "name": station_name,
-                    "streamUrl": stream_url,
-                    "homepageUrl": homepage,
-                }
-                try:
-                    resp = session.get(
-                        f"{nav_url.rstrip('/')}/rest/updateInternetRadioStation.view",
-                        params=update_payload,
-                        timeout=10,
-                    )
-                    data = resp.json().get("subsonic-response", {})
-                    if resp.status_code == 200 and data.get("status") == "ok":
-                        print(f"  [UPGRADED 320k] {station_name}")
-                        existing_stations[station_name]["streamUrl"] = stream_url
+                else:
+                    # Station exists but stream URL needs upgrade to 320k MP3
+                    if args.dry_run:
+                        print(f"  [DRY-RUN UPGRADE] Would upgrade: {station_name} -> {stream_url}")
                         total_upgraded += 1
                     else:
-                        err_msg = data.get("error", {}).get("message", resp.text)
-                        print(f"  [FAILED UPGRADE] {station_name}: {err_msg}")
-                        total_failed += 1
-                except Exception as e:
-                    print(f"  [FAILED UPGRADE] {station_name}: {e}")
-                    total_failed += 1
-                continue
-
-            if args.dry_run:
-                print(f"  [DRY-RUN ADD] Would add: {station_name} -> {stream_url}")
-                total_added += 1
-                continue
-
-            payload = {
-                **auth,
-                "name": station_name,
-                "streamUrl": stream_url,
-                "homepageUrl": homepage,
-            }
-
-            try:
-                resp = session.get(f"{nav_url.rstrip('/')}/rest/createInternetRadioStation.view", params=payload, timeout=10)
-                data = resp.json().get("subsonic-response", {})
-                if resp.status_code == 200 and data.get("status") == "ok":
-                    print(f"  [ADDED] {station_name}")
-                    existing_stations[station_name] = {"name": station_name, "streamUrl": stream_url}
+                        update_payload = {
+                            **auth,
+                            "id": station_item["id"],
+                            "name": station_name,
+                            "streamUrl": stream_url,
+                            "homepageUrl": homepage,
+                        }
+                        try:
+                            resp = session.get(
+                                f"{nav_url.rstrip('/')}/rest/updateInternetRadioStation.view",
+                                params=update_payload,
+                                timeout=10,
+                            )
+                            data = resp.json().get("subsonic-response", {})
+                            if resp.status_code == 200 and data.get("status") == "ok":
+                                print(f"  [UPGRADED 320k] {station_name}")
+                                station_item["streamUrl"] = stream_url
+                                total_upgraded += 1
+                            else:
+                                err_msg = data.get("error", {}).get("message", resp.text)
+                                print(f"  [FAILED UPGRADE] {station_name}: {err_msg}")
+                                total_failed += 1
+                        except Exception as e:
+                            print(f"  [FAILED UPGRADE] {station_name}: {e}")
+                            total_failed += 1
+            else:
+                if args.dry_run:
+                    print(f"  [DRY-RUN ADD] Would add: {station_name} -> {stream_url}")
                     total_added += 1
                 else:
-                    err_msg = data.get("error", {}).get("message", resp.text)
-                    print(f"  [FAILED] {station_name}: {err_msg}")
-                    total_failed += 1
-            except Exception as e:
-                print(f"  [FAILED] {station_name}: {e}")
-                total_failed += 1
+                    payload = {
+                        **auth,
+                        "name": station_name,
+                        "streamUrl": stream_url,
+                        "homepageUrl": homepage,
+                    }
+                    try:
+                        resp = session.get(f"{nav_url.rstrip('/')}/rest/createInternetRadioStation.view", params=payload, timeout=10)
+                        data = resp.json().get("subsonic-response", {})
+                        if resp.status_code == 200 and data.get("status") == "ok":
+                            print(f"  [ADDED] {station_name}")
+                            station_item = {"name": station_name, "streamUrl": stream_url, "coverArt": ""}
+                            existing_stations[station_name] = station_item
+                            total_added += 1
+                        else:
+                            err_msg = data.get("error", {}).get("message", resp.text)
+                            print(f"  [FAILED] {station_name}: {err_msg}")
+                            total_failed += 1
+                    except Exception as e:
+                        print(f"  [FAILED] {station_name}: {e}")
+                        total_failed += 1
+
+            # Artwork synchronization step (see docs/working/2026-10-27_station_artwork_sync.md)
+            if jwt and not args.no_artwork and chan_img:
+                current_item = existing_stations.get(station_name)
+                if current_item:
+                    has_cover = bool(current_item.get("coverArt"))
+                    if not has_cover or args.force_artwork:
+                        if args.dry_run:
+                            print(f"  [DRY-RUN ARTWORK] Would upload artwork for: {station_name}")
+                            total_artwork += 1
+                        else:
+                            # Ensure we have the station id
+                            sid = current_item.get("id")
+                            if not sid:
+                                # Re-fetch existing stations if id is missing
+                                refreshed = get_existing_stations(session, nav_url, auth)
+                                if station_name in refreshed:
+                                    existing_stations[station_name] = refreshed[station_name]
+                                    current_item = existing_stations[station_name]
+                                    sid = current_item.get("id")
+
+                            if sid and upload_station_artwork(session, nav_url, jwt, sid, chan_img):
+                                print(f"  [ARTWORK] Uploaded {station_name}")
+                                current_item["coverArt"] = "uploaded"
+                                total_artwork += 1
+                            else:
+                                total_artwork_failed += 1
 
     print("\n==================================================")
     print(" Sync Summary")
@@ -286,6 +394,9 @@ def main():
     print(f"Added          : {total_added}")
     print(f"Upgraded (320k): {total_upgraded}")
     print(f"Unchanged (320k): {total_unchanged}")
+    print(f"Artwork Sync   : {total_artwork}")
+    if total_artwork_failed > 0:
+        print(f"Artwork Failed : {total_artwork_failed}")
     print(f"Failed         : {total_failed}")
     print("==================================================")
 
